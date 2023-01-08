@@ -15,11 +15,13 @@
 
 // Your WiFi credentials.
 // Set password to "" for open networks.
-const char* ssid2 = "MiTS";
-const char* pass2 = "Anton-3422";
+//const char* ssid = "MiTS";
+//const char* pass = "Anton-3422";
 // Set password to "" for open networks.
 const char* ssid = "ZosiWiFi";
 const char* pass = "Zosi-3422";
+const char* ssid2 = "ZosiWiFi";
+const char* pass2 = "Zosi-3422";
 // Your MQTT broker address and credentials
 const char* mqtt_server = "194.146.38.199";
 const char* mqtt_user = "anto4a";
@@ -52,23 +54,34 @@ const char* TEMP_HOT_WATER_SET_TOPIC = "opentherm-thermostat/hot-water-temperatu
 const char* TEMP_BOILER_GET_TOPIC = "opentherm-thermostat/boiler-temperature/get";
 const char* TEMP_BOILER_TARGET_GET_TOPIC = "opentherm-thermostat/boiler-target-temperature/get";
 
+const char* BOILER_FAULT_TOPIC = "opentherm-thermostat/boiler-fault/get";
+const char* BOILER_MODULATION_TOPIC = "opentherm-thermostat/boiler-modulation/get";
+
+const char* INTERNAL_TEMP_CORRECT_GET_TOPIC = "opentherm-thermostat/int-correct-temp/get";
+const char* INTERNAL_TEMP_CORRECT_SET_TOPIC = "opentherm-thermostat/int-correct-temp/set";
+
 const unsigned long intTempTimeout_ms = 10 * 1000;
 const unsigned long extTempTimeout_ms = 60 * 1000;
-const unsigned long statusUpdateInterval_ms = 1000;
+const unsigned long statusUpdateInterval_ms = 5000;
+const unsigned long statusConnectMQTT_ms = 5000;
+float internalTempCorrect = 0;
 
-float  sp = 15, //set point
-       t = 15, //current temperature
+float  sp = 18, //set point
+       t = 18, //current temperature
        t_last = 0, //prior temperature
        ierr = 25, //integral error
        dt = 0, //time between measurements
-       op = 0; //PID controller output
+       op = 75; //PID controller output
 unsigned long ts = 0, new_ts = 0; //timestamp
 unsigned long lastUpdate = 0;
+unsigned long lastMQTTConnect = 0;
 unsigned long lastTempSet = 0;
 unsigned long lastIntTempSet = 0;
 
 bool heatingEnabled = true;
 bool enableHotWater = false;
+unsigned char boiler_Fault = 0;
+float boiler_Modulation = 0;
 
 #define MSG_BUFFER_SIZE  (50)
 char msg[MSG_BUFFER_SIZE];
@@ -86,7 +99,7 @@ void ICACHE_RAM_ATTR handleInterrupt() {
 float getTemp() {
   unsigned long now = millis();
   if (now - lastTempSet > extTempTimeout_ms)
-    return sensors.getTempCByIndex(0);
+    return sensors.getTempCByIndex(0) + internalTempCorrect;
   else
     return t;
 }
@@ -95,7 +108,7 @@ float pid(float sp, float pv, float pv_last, float& ierr, float dt) {
   float KP = 10;
   float KI = 0.02;
   // upper and lower bounds on heater level
-  float ophi = 63;
+  float ophi = 75;
   float oplo = 20;
   // calculate the error
   float error = sp - pv;
@@ -128,6 +141,8 @@ void updateData()
   bool enableCooling = false;
   unsigned long response = ot.setBoilerStatus(heatingEnabled, enableHotWater, enableCooling);
   OpenThermResponseStatus responseStatus = ot.getLastResponseStatus();
+  boiler_Fault = ot.getFault();
+  boiler_Modulation = ot.getModulation();
   if (responseStatus != OpenThermResponseStatus::SUCCESS) {
     Serial.println("Error: Invalid boiler response " + String(response, HEX));
   }
@@ -166,6 +181,16 @@ void updateData()
   snprintf (msg, MSG_BUFFER_SIZE, "%s", enableHotWater ? "on" : "off");
   client.publish(MODE_HOT_WATER_GET_TOPIC, msg);
 
+  snprintf (msg, MSG_BUFFER_SIZE, "%s", String(boiler_Fault).c_str());
+  client.publish(BOILER_FAULT_TOPIC, msg);
+
+  snprintf (msg, MSG_BUFFER_SIZE, "%s", String(boiler_Modulation).c_str());
+  client.publish(BOILER_MODULATION_TOPIC, msg);
+
+  snprintf (msg, MSG_BUFFER_SIZE, "%s", String(internalTempCorrect).c_str());
+  client.publish(INTERNAL_TEMP_CORRECT_GET_TOPIC, msg);
+
+
   Serial.print("Current temperature: " + String(t) + " °C ");
   String tempSource = (millis() - lastTempSet > extTempTimeout_ms)
                       ? "(internal sensor)"
@@ -186,6 +211,8 @@ const String setpointSetTopic(TEMP_SETPOINT_SET_TOPIC);
 const String currentTempSetTopic(CURRENT_TEMP_SET_TOPIC);
 const String modeSetTopic(MODE_SET_TOPIC);
 const String modeSetHotWaterTopic(MODE_HOT_WATER_SET_TOPIC);
+const String setCorrectInternalTempTopic(INTERNAL_TEMP_CORRECT_SET_TOPIC);
+
 
 void callback(char* topic, byte* payload, unsigned int length) {
   const String topicStr(topic);
@@ -199,6 +226,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
   else if (topicStr == currentTempSetTopic) {
     t = payloadStr.toFloat();
     lastTempSet = millis();
+  }
+  else if (topicStr == setCorrectInternalTempTopic) {
+    internalTempCorrect = payloadStr.toFloat();
+    Serial.println("Set correct: " + String(internalTempCorrect));
   }
   else if (topicStr == modeSetTopic) {
     Serial.println("Set mode: " + payloadStr);
@@ -215,29 +246,9 @@ void callback(char* topic, byte* payload, unsigned int length) {
     else if (payloadStr == "off")
       enableHotWater = false;
   }
+
 }
 
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    const char* clientId = "opentherm-thermostat-test";
-    if (client.connect(clientId, mqtt_user, mqtt_password)) {
-      Serial.println("ok");
-
-      client.subscribe(TEMP_SETPOINT_SET_TOPIC);
-      client.subscribe(MODE_SET_TOPIC);
-      client.subscribe(CURRENT_TEMP_SET_TOPIC);
-      client.subscribe(MODE_HOT_WATER_SET_TOPIC);
-    } else {
-      Serial.print(" failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-}
 
 void setup()
 {
@@ -247,9 +258,9 @@ void setup()
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, pass);
 
-  int deadCounter = 20;
+  int deadCounter = 30;
   while (WiFi.status() != WL_CONNECTED && deadCounter-- > 0) {
-    delay(500);
+    delay(1000);
     Serial.print(".");
   }
 
@@ -266,7 +277,7 @@ void setup()
 
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Failed to connect to " + String(ssid));
-    while (true);
+    //while (true);
   }
   else {
     Serial.println("ok");
@@ -286,14 +297,42 @@ void setup()
   lastTempSet = -extTempTimeout_ms;
 }
 
+
+void reconnect() {
+  // Loop until we're reconnected
+  //while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    const char* clientId = "opentherm-thermostat-test";
+    if (client.connect(clientId, mqtt_user, mqtt_password)) {
+      Serial.println("ok");
+
+      client.subscribe(TEMP_SETPOINT_SET_TOPIC);
+      client.subscribe(MODE_SET_TOPIC);
+      client.subscribe(CURRENT_TEMP_SET_TOPIC);
+      client.subscribe(MODE_HOT_WATER_SET_TOPIC);
+      client.subscribe(INTERNAL_TEMP_CORRECT_SET_TOPIC);
+    } else {
+      Serial.print(" failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      //delay(5000);
+    }
+  //}
+}
+
 void loop()
 {
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
-
   unsigned long now = millis();
+  if (!client.connected()) {
+    if (now - lastMQTTConnect > statusConnectMQTT_ms) {
+      reconnect();
+      lastMQTTConnect = now;
+    }
+  }
+  else client.loop();
+
+  
   if (now - lastUpdate > statusUpdateInterval_ms) {
     lastUpdate = now;
     updateData();
