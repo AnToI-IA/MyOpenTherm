@@ -1,0 +1,12 @@
+<script>
+document.getElementById("table").onclick = function(event) {
+let target = event.target;
+if (target.tagName != 'TD') return; 
+gettext(target); 
+};
+function gettext(td) 
+{
+let url = new URL(window.location.href);
+url.searchParams.set('moduleid', td.innerHTML); 
+document.location.href = url;
+}</script></html>        

@@ -7,64 +7,37 @@
   Adjust settings in Config.h before run
  *************************************************************/
 
+#define FS_NO_GLOBALS
+#include <Arduino.h>
+#include <string.h>
+#include <stdio.h>
 #include <ESP8266WiFi.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <PubSubClient.h>
 #include <OpenTherm.h>
 
-// Your WiFi credentials.
-// Set password to "" for open networks.
-//const char* ssid = "MiTS";
-//const char* pass = "Anton-3422";
-// Set password to "" for open networks.
-const char* ssid = "ZosiWiFi";
-const char* pass = "Zosi-3422";
-const char* ssid2 = "ZosiWiFi";
-const char* pass2 = "Zosi-3422";
-// Your MQTT broker address and credentials
-const char* mqtt_server = "194.146.38.199";
-const char* mqtt_user = "anto4a";
-const char* mqtt_password = "Mosq3422M";
-const int mqtt_port = 1883;
+#include <MyDebug.h>
+#include <ArduinoOTA.h>
+#include <ArduinoJson.h>
 
-// Master OpenTherm Shield pins configuration
-const int OT_OUT_PIN = D1; //for Arduino, 5 for ESP8266 (D1), 22 for ESP32
-const int OT_IN_PIN = D2;  //for Arduino, 4 for ESP8266 (D2), 21 for ESP32
 
-// Temperature sensor pin
-const int ROOM_TEMP_SENSOR_PIN = D3; //for Arduino, 14 for ESP8266 (D5), 18 for ESP32
+#include <MyWiFI.h>
+#include "LittleFS.h" // LittleFS is declared
+#include "GyverTimer.h"
+#include "main.h"
+#include "MyServer.h"
 
-// MQTT topics
-const char* CURRENT_TEMP_GET_TOPIC = "opentherm-thermostat/current-temperature/get";
-const char* CURRENT_TEMP_SET_TOPIC = "opentherm-thermostat/current-temperature/set";
+MyWiFI mwifi;
+MyServer myserv;
 
-const char* TEMP_SETPOINT_GET_TOPIC = "opentherm-thermostat/setpoint-temperature/get";
-const char* TEMP_SETPOINT_SET_TOPIC = "opentherm-thermostat/setpoint-temperature/set";
-
-const char* MODE_GET_TOPIC = "opentherm-thermostat/mode/get";
-const char* MODE_SET_TOPIC = "opentherm-thermostat/mode/set";
-
-const char* MODE_HOT_WATER_GET_TOPIC = "opentherm-thermostat/mode-hot-water/get";
-const char* MODE_HOT_WATER_SET_TOPIC = "opentherm-thermostat/mode-hot-water/set";
-
-const char* TEMP_HOT_WATER_GET_TOPIC = "opentherm-thermostat/hot-water-temperature/get";
-const char* TEMP_HOT_WATER_SET_TOPIC = "opentherm-thermostat/hot-water-temperature/set";
-
-const char* TEMP_BOILER_GET_TOPIC = "opentherm-thermostat/boiler-temperature/get";
-const char* TEMP_BOILER_TARGET_GET_TOPIC = "opentherm-thermostat/boiler-target-temperature/get";
-
-const char* BOILER_FAULT_TOPIC = "opentherm-thermostat/boiler-fault/get";
-const char* BOILER_MODULATION_TOPIC = "opentherm-thermostat/boiler-modulation/get";
-
-const char* INTERNAL_TEMP_CORRECT_GET_TOPIC = "opentherm-thermostat/int-correct-temp/get";
-const char* INTERNAL_TEMP_CORRECT_SET_TOPIC = "opentherm-thermostat/int-correct-temp/set";
 
 const unsigned long intTempTimeout_ms = 10 * 1000;
 const unsigned long extTempTimeout_ms = 60 * 1000;
 const unsigned long statusUpdateInterval_ms = 5000;
 const unsigned long statusConnectMQTT_ms = 5000;
 float internalTempCorrect = 0;
+float inttemp = 0;
 
 float  sp = 18, //set point
        t = 18, //current temperature
@@ -72,6 +45,7 @@ float  sp = 18, //set point
        ierr = 25, //integral error
        dt = 0, //time between measurements
        op = 75; //PID controller output
+float t_hot_water;
 unsigned long ts = 0, new_ts = 0; //timestamp
 unsigned long lastUpdate = 0;
 unsigned long lastMQTTConnect = 0;
@@ -83,8 +57,8 @@ bool enableHotWater = false;
 unsigned char boiler_Fault = 0;
 float boiler_Modulation = 0;
 
-#define MSG_BUFFER_SIZE  (50)
-char msg[MSG_BUFFER_SIZE];
+//#define MSG_BUFFER_SIZE  (50)
+//char msg[MSG_BUFFER_SIZE];
 
 OneWire oneWire(ROOM_TEMP_SENSOR_PIN);
 DallasTemperature sensors(&oneWire);
@@ -96,10 +70,18 @@ void ICACHE_RAM_ATTR handleInterrupt() {
   ot.handleInterrupt();
 }
 
+String Topic (const char* st )
+{
+  String st1 = TOPIC; 
+  String st2 = st; 
+  return st1 + st2;
+}
+
 float getTemp() {
+  inttemp = sensors.getTempCByIndex(0);
   unsigned long now = millis();
   if (now - lastTempSet > extTempTimeout_ms)
-    return sensors.getTempCByIndex(0) + internalTempCorrect;
+    return inttemp + internalTempCorrect;
   else
     return t;
 }
@@ -141,8 +123,10 @@ void updateData()
   bool enableCooling = false;
   unsigned long response = ot.setBoilerStatus(heatingEnabled, enableHotWater, enableCooling);
   OpenThermResponseStatus responseStatus = ot.getLastResponseStatus();
+
   boiler_Fault = ot.getFault();
   boiler_Modulation = ot.getModulation();
+
   if (responseStatus != OpenThermResponseStatus::SUCCESS) {
     Serial.println("Error: Invalid boiler response " + String(response, HEX));
   }
@@ -161,62 +145,70 @@ void updateData()
     lastIntTempSet = tnow;
     sensors.requestTemperatures(); //async temperature request
   }
-  
-  snprintf (msg, MSG_BUFFER_SIZE, "%s", String(op).c_str());
-  client.publish(TEMP_BOILER_TARGET_GET_TOPIC, msg);
-
-  snprintf (msg, MSG_BUFFER_SIZE, "%s", String(t).c_str());
-  client.publish(CURRENT_TEMP_GET_TOPIC, msg);
-
-  float bt = ot.getBoilerTemperature();
-  snprintf (msg, MSG_BUFFER_SIZE, "%s", String(bt).c_str());
-  client.publish(TEMP_BOILER_GET_TOPIC, msg);
-
-  snprintf (msg, MSG_BUFFER_SIZE, "%s", String(sp).c_str());
-  client.publish(TEMP_SETPOINT_GET_TOPIC, msg);
-
-  snprintf (msg, MSG_BUFFER_SIZE, "%s", heatingEnabled ? "heat" : "off");
-  client.publish(MODE_GET_TOPIC, msg);
-
-  snprintf (msg, MSG_BUFFER_SIZE, "%s", enableHotWater ? "on" : "off");
-  client.publish(MODE_HOT_WATER_GET_TOPIC, msg);
-
-  snprintf (msg, MSG_BUFFER_SIZE, "%s", String(boiler_Fault).c_str());
-  client.publish(BOILER_FAULT_TOPIC, msg);
-
-  snprintf (msg, MSG_BUFFER_SIZE, "%s", String(boiler_Modulation).c_str());
-  client.publish(BOILER_MODULATION_TOPIC, msg);
-
-  snprintf (msg, MSG_BUFFER_SIZE, "%s", String(internalTempCorrect).c_str());
-  client.publish(INTERNAL_TEMP_CORRECT_GET_TOPIC, msg);
-
 
   Serial.print("Current temperature: " + String(t) + " °C ");
   String tempSource = (millis() - lastTempSet > extTempTimeout_ms)
                       ? "(internal sensor)"
                       : "(external sensor)";
   Serial.println(tempSource);
+
+  if (!client.connected()) return;
+
+  float bt = ot.getBoilerTemperature();
+  float wt = ot.getDHWTemperature();
+
+  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(op).c_str());
+  
+  client.publish(Topic(TEMP_BOILER_TARGET_GET_TOPIC).c_str(), String(op).c_str());
+
+  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(t).c_str());
+  client.publish(Topic(CURRENT_TEMP_GET_TOPIC).c_str(), String(t).c_str());
+
+  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(bt).c_str());
+  client.publish(Topic(TEMP_BOILER_GET_TOPIC).c_str(), String(bt).c_str());
+
+  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(sp).c_str());
+  client.publish(Topic(TEMP_SETPOINT_GET_TOPIC).c_str(), String(sp).c_str());
+
+  //snprintf (msg, MSG_BUFFER_SIZE, "%s", heatingEnabled ? "heat" : "off");
+  client.publish(Topic(MODE_GET_TOPIC).c_str(), heatingEnabled ? "heat" : "off");
+
+  //snprintf (msg, MSG_BUFFER_SIZE, "%s", enableHotWater ? "on" : "off");
+  client.publish(Topic(MODE_HOT_WATER_GET_TOPIC).c_str(), enableHotWater ? "on" : "off");
+
+  client.publish(Topic(TEMP_HOT_WATER_GET_TOPIC).c_str(), String(wt).c_str());
+
+  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(boiler_Fault).c_str());
+  client.publish(Topic(BOILER_FAULT_TOPIC).c_str(), String(boiler_Fault).c_str());
+
+  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(boiler_Modulation).c_str());
+  client.publish(Topic(BOILER_MODULATION_TOPIC).c_str(), String(boiler_Modulation).c_str());
+
+  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(internalTempCorrect).c_str());
+  client.publish(Topic(INTERNAL_TEMP_CORRECT_GET_TOPIC).c_str(), String(internalTempCorrect).c_str());
+
 }
 
 String convertPayloadToStr(byte* payload, unsigned int length) {
   char s[length + 1];
   s[length] = 0;
-  for (int i = 0; i < length; ++i)
+  for (unsigned int i = 0; i < length; ++i)
     s[i] = payload[i];
   String tempRequestStr(s);
   return tempRequestStr;
 }
 
-const String setpointSetTopic(TEMP_SETPOINT_SET_TOPIC);
-const String currentTempSetTopic(CURRENT_TEMP_SET_TOPIC);
-const String modeSetTopic(MODE_SET_TOPIC);
-const String modeSetHotWaterTopic(MODE_HOT_WATER_SET_TOPIC);
-const String setCorrectInternalTempTopic(INTERNAL_TEMP_CORRECT_SET_TOPIC);
+const String setpointSetTopic(Topic(TEMP_SETPOINT_SET_TOPIC).c_str());
+const String currentTempSetTopic(Topic(CURRENT_TEMP_SET_TOPIC).c_str());
+const String modeSetTopic(Topic(MODE_SET_TOPIC).c_str());
+const String modeSetHotWaterTopic(Topic(MODE_HOT_WATER_SET_TOPIC).c_str());
+const String tempSetHotWaterTopic(Topic(TEMP_HOT_WATER_SET_TOPIC).c_str());
+const String setCorrectInternalTempTopic(Topic(INTERNAL_TEMP_CORRECT_SET_TOPIC).c_str());
 
 
 void callback(char* topic, byte* payload, unsigned int length) {
   const String topicStr(topic);
-
+ 
   String payloadStr = convertPayloadToStr(payload, length);
 
   if (topicStr == setpointSetTopic) {
@@ -230,6 +222,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
   else if (topicStr == setCorrectInternalTempTopic) {
     internalTempCorrect = payloadStr.toFloat();
     Serial.println("Set correct: " + String(internalTempCorrect));
+  }
+  else if (topicStr == tempSetHotWaterTopic) {
+    t_hot_water = payloadStr.toFloat();
+    Serial.println("Hot water temperature: " + String(t_hot_water));
   }
   else if (topicStr == modeSetTopic) {
     Serial.println("Set mode: " + payloadStr);
@@ -249,15 +245,52 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 }
 
+void listDir(const char * dirname) {
+  Serial.printf("Содержимое папки \"%s\" файловой системы SPIFS: \r\n", dirname);
+
+  Dir root = LittleFS.openDir(dirname);
+
+  while (root.next()) {
+    File file = root.openFile("r");
+    Serial.print(F("  Файл: "));
+    Serial.print(root.fileName());
+    Serial.print(F(";  Размер: "));
+    Serial.println(file.size());
+    file.close();
+  }
+}
 
 void setup()
 {
   Serial.begin(115200);
-  Serial.println("");
-  Serial.print("Connecting to " + String(ssid));
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, pass);
+  delay(200); 
+  Serial.println();
+  Serial.println("Mount LittleFS");
 
+  if (!LittleFS.begin()) {
+    Serial.println("LittleFS mount failed");
+    return;
+  }
+
+  listDir("/");
+
+  if (!(myserv.loadConfig(PATH_SETJSON)))
+  {
+    myserv.saveConfig(PATH_SETJSON);
+  }
+
+  //mwifi.SetConfig("ZosiWiFi","Zosi-3422");
+  mwifi.SetConfig(myserv.getConfig().SSID,myserv.getConfig().PSW);
+  mwifi.SetHostname("Boiler");
+  mwifi.AutoWiFi();
+  //if (startWiFi()) 
+  myserv.startServer();
+
+  ArduinoOTA.setHostname("OpenTherm");
+  ArduinoOTA.setPassword((const char *)"123");
+  ArduinoOTA.begin();   // You should set a password for OTA. Ideally using MD5 hashes
+  
+/*
   int deadCounter = 30;
   while (WiFi.status() != WL_CONNECTED && deadCounter-- > 0) {
     delay(1000);
@@ -282,6 +315,7 @@ void setup()
   else {
     Serial.println("ok");
   }
+*/
 
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
@@ -292,7 +326,8 @@ void setup()
   sensors.begin();
   sensors.requestTemperatures();
   sensors.setWaitForConversion(false); //switch to async mode
-  t, t_last = sensors.getTempCByIndex(0);
+  t = sensors.getTempCByIndex(0);
+  t_last = t;
   ts = millis();
   lastTempSet = -extTempTimeout_ms;
 }
@@ -302,15 +337,16 @@ void reconnect() {
   // Loop until we're reconnected
   //while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
-    const char* clientId = "opentherm-thermostat-test";
+    const char* clientId = "opentherm-thermostattest";
     if (client.connect(clientId, mqtt_user, mqtt_password)) {
       Serial.println("ok");
 
-      client.subscribe(TEMP_SETPOINT_SET_TOPIC);
-      client.subscribe(MODE_SET_TOPIC);
-      client.subscribe(CURRENT_TEMP_SET_TOPIC);
-      client.subscribe(MODE_HOT_WATER_SET_TOPIC);
-      client.subscribe(INTERNAL_TEMP_CORRECT_SET_TOPIC);
+      client.subscribe(Topic(TEMP_SETPOINT_SET_TOPIC).c_str());
+      client.subscribe(Topic(MODE_SET_TOPIC).c_str());
+      client.subscribe(Topic(CURRENT_TEMP_SET_TOPIC).c_str());
+      client.subscribe(Topic(MODE_HOT_WATER_SET_TOPIC).c_str());
+      client.subscribe(Topic(INTERNAL_TEMP_CORRECT_SET_TOPIC).c_str());
+      client.subscribe(Topic(TEMP_HOT_WATER_SET_TOPIC).c_str());
     } else {
       Serial.print(" failed, rc=");
       Serial.print(client.state());
@@ -323,6 +359,7 @@ void reconnect() {
 
 void loop()
 {
+  ArduinoOTA.handle();
   unsigned long now = millis();
   if (!client.connected()) {
     if (now - lastMQTTConnect > statusConnectMQTT_ms) {
@@ -335,8 +372,7 @@ void loop()
   
   if (now - lastUpdate > statusUpdateInterval_ms) {
     lastUpdate = now;
+    myserv.handleClientServer();
     updateData();
   }
 }
-
-//RelModLevel

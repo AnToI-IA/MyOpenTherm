@@ -1,0 +1,15 @@
+<h2>Бойлер</h2>
+<h3>Настройки подключения к WiFi</h3>
+<body><form method='get'>
+<div class="password"><p><input id='s' name='ssid' length=64 placeholder='Имя точки доступа' size="64" required><br/></p>
+<p><input id='p' name='password' length=64 type='password' placeholder='Пароль' minlength='4' maxlength='32' size="64" required>
+<p><input type="checkbox" id="pCheckbox" onclick="show_hide_password(this)"> Показать пароль</p></div>
+<p><button class="button button2">Сохранить</button></p></form>
+<a href="../reset"><button class="button button2">Перезагрузить устройство</button></a><br><br>
+<a href="../"><button class="button button2">На главную</button></a>
+<script>function show_hide_password(target){
+var input = document.getElementById('p');
+var pCheck = document.getElementById("pCheckbox");
+if (input.getAttribute('type') == 'password') {
+target.classList.add('view');input.setAttribute('type', 'text');}
+else {target.classList.remove('view');input.setAttribute('type', 'password');}}</script></body></html>
