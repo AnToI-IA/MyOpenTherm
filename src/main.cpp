@@ -1,11 +1,3 @@
-/*************************************************************
-  This example runs directly on ESP8266 chip.
-
-  Please be sure to select the right ESP8266 module
-  in the Tools -> Board -> WeMos D1 Mini
-
-  Adjust settings in Config.h before run
- *************************************************************/
 
 #define FS_NO_GLOBALS
 #include <Arduino.h>
@@ -20,11 +12,8 @@
 #include <MyDebug.h>
 #include <ArduinoOTA.h>
 #include <ArduinoJson.h>
-
-
 #include <MyWiFI.h>
-#include "LittleFS.h" // LittleFS is declared
-#include "GyverTimer.h"
+#include "LittleFS.h"
 #include "main.h"
 #include "MyServer.h"
 
@@ -121,7 +110,10 @@ void updateData()
   //Set/Get Boiler Status
   //bool enableHotWater = true;
   bool enableCooling = false;
-  unsigned long response = ot.setBoilerStatus(heatingEnabled, enableHotWater, enableCooling);
+  unsigned long response;
+  
+  response = ot.setBoilerStatus(heatingEnabled, enableHotWater, enableCooling);
+  
   OpenThermResponseStatus responseStatus = ot.getLastResponseStatus();
 
   boiler_Fault = ot.getFault();
@@ -141,6 +133,11 @@ void updateData()
   }
   t_last = t;
   unsigned long tnow = millis();
+  if (ot.isHotWaterActive(response))
+  {
+    ot.setDHWSetpoint(t_hot_water);
+    Serial.print("Set temperature hot water: " + String(t_hot_water) + " °C ");
+  } 
   if (tnow - lastIntTempSet > intTempTimeout_ms) {
     lastIntTempSet = tnow;
     sensors.requestTemperatures(); //async temperature request
@@ -156,7 +153,7 @@ void updateData()
 
   float bt = ot.getBoilerTemperature();
   float wt = ot.getDHWTemperature();
-
+  
   //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(op).c_str());
   
   client.publish(Topic(TEMP_BOILER_TARGET_GET_TOPIC).c_str(), String(op).c_str());
@@ -287,7 +284,7 @@ void setup()
   myserv.startServer();
 
   ArduinoOTA.setHostname("OpenTherm");
-  ArduinoOTA.setPassword((const char *)"123");
+  ArduinoOTA.setPassword((const char *)"3422");
   ArduinoOTA.begin();   // You should set a password for OTA. Ideally using MD5 hashes
   
 /*
@@ -369,7 +366,6 @@ void loop()
   }
   else client.loop();
 
-  
   if (now - lastUpdate > statusUpdateInterval_ms) {
     lastUpdate = now;
     myserv.handleClientServer();
