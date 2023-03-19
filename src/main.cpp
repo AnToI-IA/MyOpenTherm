@@ -20,7 +20,6 @@
 MyWiFI mwifi;
 MyServer myserv;
 
-
 const unsigned long intTempTimeout_ms = 10 * 1000;
 const unsigned long extTempTimeout_ms = 60 * 1000;
 const unsigned long statusUpdateInterval_ms = 5000;
@@ -33,7 +32,8 @@ float  sp = 18, //set point
        t_last = 0, //prior temperature
        ierr = 25, //integral error
        dt = 0, //time between measurements
-       op = 75; //PID controller output
+       op = 75, //PID controller output
+       ophi = 75;
 float t_hot_water;
 unsigned long ts = 0, new_ts = 0; //timestamp
 unsigned long lastUpdate = 0;
@@ -48,6 +48,8 @@ float boiler_Modulation = 0;
 
 //#define MSG_BUFFER_SIZE  (50)
 //char msg[MSG_BUFFER_SIZE];
+
+bool needSave = false;
 
 OneWire oneWire(ROOM_TEMP_SENSOR_PIN);
 DallasTemperature sensors(&oneWire);
@@ -79,8 +81,7 @@ float pid(float sp, float pv, float pv_last, float& ierr, float dt) {
   float KP = 10;
   float KI = 0.02;
   // upper and lower bounds on heater level
-  float ophi = 75;
-  float oplo = 20;
+  float oplo = OPLO;
   // calculate the error
   float error = sp - pv;
   // calculate the integral error
@@ -98,21 +99,15 @@ float pid(float sp, float pv, float pv_last, float& ierr, float dt) {
     op = max(oplo, min(ophi, op));
   }
   ierr = I;
-
   Serial.println("sp=" + String(sp) + " pv=" + String(pv) + " dt=" + String(dt) + " op=" + String(op) + " P=" + String(P) + " I=" + String(I));
-
   return op;
 }
 
 // This function calculates temperature and sends data to MQTT every second.
 void updateData()
 {
-  //Set/Get Boiler Status
-  //bool enableHotWater = true;
-  bool enableCooling = false;
   unsigned long response;
-  
-  response = ot.setBoilerStatus(heatingEnabled, enableHotWater, enableCooling);
+  response = ot.setBoilerStatus(heatingEnabled, enableHotWater);
   
   OpenThermResponseStatus responseStatus = ot.getLastResponseStatus();
 
@@ -154,36 +149,18 @@ void updateData()
   float bt = ot.getBoilerTemperature();
   float wt = ot.getDHWTemperature();
   
-  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(op).c_str());
-  
   client.publish(Topic(TEMP_BOILER_TARGET_GET_TOPIC).c_str(), String(op).c_str());
-
-  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(t).c_str());
   client.publish(Topic(CURRENT_TEMP_GET_TOPIC).c_str(), String(t).c_str());
-
-  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(bt).c_str());
   client.publish(Topic(TEMP_BOILER_GET_TOPIC).c_str(), String(bt).c_str());
-
-  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(sp).c_str());
   client.publish(Topic(TEMP_SETPOINT_GET_TOPIC).c_str(), String(sp).c_str());
-
-  //snprintf (msg, MSG_BUFFER_SIZE, "%s", heatingEnabled ? "heat" : "off");
   client.publish(Topic(MODE_GET_TOPIC).c_str(), heatingEnabled ? "heat" : "off");
-
-  //snprintf (msg, MSG_BUFFER_SIZE, "%s", enableHotWater ? "on" : "off");
-  client.publish(Topic(MODE_HOT_WATER_GET_TOPIC).c_str(), enableHotWater ? "on" : "off");
-
+  client.publish(Topic(MODE_HOT_WATER_GET_TOPIC).c_str(), enableHotWater ? "heat" : "off");
   client.publish(Topic(TEMP_HOT_WATER_GET_TOPIC).c_str(), String(wt).c_str());
-
-  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(boiler_Fault).c_str());
-  client.publish(Topic(BOILER_FAULT_TOPIC).c_str(), String(boiler_Fault).c_str());
-
-  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(boiler_Modulation).c_str());
+  client.publish(Topic(TEMP_HOT_WATER_GET_CUR_TOPIC).c_str(), String(t_hot_water).c_str());
   client.publish(Topic(BOILER_MODULATION_TOPIC).c_str(), String(boiler_Modulation).c_str());
-
-  //snprintf (msg, MSG_BUFFER_SIZE, "%s", String(internalTempCorrect).c_str());
   client.publish(Topic(INTERNAL_TEMP_CORRECT_GET_TOPIC).c_str(), String(internalTempCorrect).c_str());
-
+  client.publish(Topic(MAX_BOILER_TEMP_GET_TOPIC).c_str(), String(ophi).c_str());
+  client.publish(Topic(INT_SENSOR_TEMP_GET_TOPIC).c_str(), String(inttemp).c_str());
 }
 
 String convertPayloadToStr(byte* payload, unsigned int length) {
@@ -201,7 +178,7 @@ const String modeSetTopic(Topic(MODE_SET_TOPIC).c_str());
 const String modeSetHotWaterTopic(Topic(MODE_HOT_WATER_SET_TOPIC).c_str());
 const String tempSetHotWaterTopic(Topic(TEMP_HOT_WATER_SET_TOPIC).c_str());
 const String setCorrectInternalTempTopic(Topic(INTERNAL_TEMP_CORRECT_SET_TOPIC).c_str());
-
+const String maxBoilerTempTopic(Topic(MAX_BOILER_TEMP_SET_TOPIC).c_str());
 
 void callback(char* topic, byte* payload, unsigned int length) {
   const String topicStr(topic);
@@ -209,8 +186,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
   String payloadStr = convertPayloadToStr(payload, length);
 
   if (topicStr == setpointSetTopic) {
+    if ((sp > SPMAX) || (sp < SPMIN)) Serial.print("Target temperature not change! ");
+    else sp = payloadStr.toFloat();
     Serial.println("Set target temperature: " + payloadStr);
-    sp = payloadStr.toFloat();
+    needSave = true;
   }
   else if (topicStr == currentTempSetTopic) {
     t = payloadStr.toFloat();
@@ -219,27 +198,34 @@ void callback(char* topic, byte* payload, unsigned int length) {
   else if (topicStr == setCorrectInternalTempTopic) {
     internalTempCorrect = payloadStr.toFloat();
     Serial.println("Set correct: " + String(internalTempCorrect));
+    needSave = true;
   }
   else if (topicStr == tempSetHotWaterTopic) {
     t_hot_water = payloadStr.toFloat();
     Serial.println("Hot water temperature: " + String(t_hot_water));
+    needSave = true;
+  }
+  else if (topicStr == maxBoilerTempTopic) {
+    ophi = payloadStr.toFloat();
+    if ((ophi > OPHIMAX) || (ophi < OPLO)) {
+      Serial.print("Maximum boiler not change! ");
+    }
+    Serial.println("Temperature: " + String(ophi));
+    needSave = true;
   }
   else if (topicStr == modeSetTopic) {
     Serial.println("Set mode: " + payloadStr);
-    if (payloadStr == "heat")
-      heatingEnabled = true;
-    else if (payloadStr == "off")
-      heatingEnabled = false;
-    else
-      Serial.println("Unknown mode");
+    if (payloadStr == "heat") heatingEnabled = true;
+    else if (payloadStr == "off") heatingEnabled = false;
+    else Serial.println("Unknown mode");
+    needSave = true;
   }
   else if (topicStr == modeSetHotWaterTopic) {
-    if (payloadStr == "on")
-      enableHotWater = true;
-    else if (payloadStr == "off")
-      enableHotWater = false;
+    if (payloadStr == "heat") enableHotWater = true;
+    else if (payloadStr == "off") enableHotWater = false;
+    else Serial.println("Unknown mode");
+    needSave = true;
   }
-
 }
 
 void listDir(const char * dirname) {
@@ -257,6 +243,12 @@ void listDir(const char * dirname) {
   }
 }
 
+void fixConfig () {
+  if ((ophi > OPHIMAX) || (ophi < OPLO)) ophi = OPHIDEF;
+  if ((sp > SPMAX) || (sp < SPMIN)) sp = SPDEF;
+
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -269,50 +261,23 @@ void setup()
     return;
   }
 
-  listDir("/");
-
+  //listDir("/");
   if (!(myserv.loadConfig(PATH_SETJSON)))
   {
+    Serial.print("Load Config Failed. Save default");
     myserv.saveConfig(PATH_SETJSON);
   }
-
-  //mwifi.SetConfig("ZosiWiFi","Zosi-3422");
+  fixConfig ();
   mwifi.SetConfig(myserv.getConfig().SSID,myserv.getConfig().PSW);
   mwifi.SetHostname("Boiler");
   mwifi.AutoWiFi();
-  //if (startWiFi()) 
+
   myserv.startServer();
 
   ArduinoOTA.setHostname("OpenTherm");
   ArduinoOTA.setPassword((const char *)"3422");
   ArduinoOTA.begin();   // You should set a password for OTA. Ideally using MD5 hashes
   
-/*
-  int deadCounter = 30;
-  while (WiFi.status() != WL_CONNECTED && deadCounter-- > 0) {
-    delay(1000);
-    Serial.print(".");
-  }
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("");
-    Serial.print("Connecting to " + String(ssid2));
-    WiFi.begin(ssid2, pass2);
-    deadCounter = 20;
-    while (WiFi.status() != WL_CONNECTED && deadCounter-- > 0) {
-      delay(500);
-      Serial.print(".");
-    }
-  }
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Failed to connect to " + String(ssid));
-    //while (true);
-  }
-  else {
-    Serial.println("ok");
-  }
-*/
 
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
@@ -331,27 +296,20 @@ void setup()
 
 
 void reconnect() {
-  // Loop until we're reconnected
-  //while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    const char* clientId = "opentherm-thermostattest";
-    if (client.connect(clientId, mqtt_user, mqtt_password)) {
-      Serial.println("ok");
-
-      client.subscribe(Topic(TEMP_SETPOINT_SET_TOPIC).c_str());
-      client.subscribe(Topic(MODE_SET_TOPIC).c_str());
-      client.subscribe(Topic(CURRENT_TEMP_SET_TOPIC).c_str());
-      client.subscribe(Topic(MODE_HOT_WATER_SET_TOPIC).c_str());
-      client.subscribe(Topic(INTERNAL_TEMP_CORRECT_SET_TOPIC).c_str());
-      client.subscribe(Topic(TEMP_HOT_WATER_SET_TOPIC).c_str());
-    } else {
-      Serial.print(" failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      //delay(5000);
-    }
-  //}
+  Serial.print("Attempting MQTT connection...");
+  if (client.connect(TOPIC, mqtt_user, mqtt_password)) {
+    Serial.println("ok");
+    client.subscribe(Topic(TEMP_SETPOINT_SET_TOPIC).c_str());
+    client.subscribe(Topic(MODE_SET_TOPIC).c_str());
+    client.subscribe(Topic(CURRENT_TEMP_SET_TOPIC).c_str());
+    client.subscribe(Topic(MODE_HOT_WATER_SET_TOPIC).c_str());
+    client.subscribe(Topic(INTERNAL_TEMP_CORRECT_SET_TOPIC).c_str());
+    client.subscribe(Topic(TEMP_HOT_WATER_SET_TOPIC).c_str());
+    client.subscribe(Topic(MAX_BOILER_TEMP_SET_TOPIC).c_str());
+  } else {
+    Serial.print(" failed, rc=");
+    Serial.print(client.state());
+  }
 }
 
 void loop()
@@ -360,11 +318,17 @@ void loop()
   unsigned long now = millis();
   if (!client.connected()) {
     if (now - lastMQTTConnect > statusConnectMQTT_ms) {
-      reconnect();
+      if (mwifi.status == Connected && mwifi.checkInternet()) reconnect();
       lastMQTTConnect = now;
     }
   }
   else client.loop();
+
+  if (needSave) {
+    myserv.saveConfig(PATH_SETJSON);
+    Serial.println(" Save config!");
+    needSave = false;
+  }
 
   if (now - lastUpdate > statusUpdateInterval_ms) {
     lastUpdate = now;

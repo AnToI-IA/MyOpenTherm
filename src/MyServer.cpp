@@ -4,7 +4,13 @@
 
 ESP8266WebServer server(80);
 Config mconfig;      // глобальный конфиг устройства, сохраняется в FS
-extern float inttemp;
+extern float  inttemp;
+extern float  sp,
+              ophi;
+extern float internalTempCorrect;
+extern float t_hot_water;
+extern bool heatingEnabled;
+extern bool enableHotWater;
 
 Config MyServer::getConfig()
 {
@@ -28,9 +34,16 @@ bool loadConfiguration(const char *filename, Config &config) {
   // Copy values from the JsonDocument to the Config
   strlcpy(config.SSID, doc["SSID"] | "", sizeof(config.SSID));  
   strlcpy(config.PSW, doc["PSW"] | "", sizeof(config.PSW));  
-
+  sp = doc["SetPointTempr"];
+  ophi = doc[("MaxBoilerTempr")];
   config.timeZone = doc["TimeZone"] | 0;
 
+  heatingEnabled = doc[("HeatingEnabled")];
+  enableHotWater = doc[("EnableHotWater")];
+
+  internalTempCorrect = doc[("InternalTempCorrect")];
+
+  t_hot_water = doc[("TempHotWater")];
   // Close the file (Curiously, File's destructor doesn't close the file)
   file.close();
   #ifdef TESTMBREG
@@ -63,7 +76,13 @@ void saveConfiguration(const char *filename, const Config &config) {
   doc[("SSID")] = config.SSID;
   doc[("PSW")] = config.PSW;
   doc[("TimeZone")] = config.timeZone;
-
+  doc[("SetPointTempr")] = sp;
+  doc[("MaxBoilerTempr")] = ophi;
+  doc[("HeatingEnabled")] = heatingEnabled;
+  doc[("EnableHotWater")] = enableHotWater;
+  doc[("InternalTempCorrect")] = internalTempCorrect;
+  doc[("TempHotWater")] = t_hot_water;
+  
   // Serialize JSON to file
   if (serializeJson(doc, file) == 0) {
   }

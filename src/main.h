@@ -17,10 +17,17 @@ const int mqtt_port = 1883;
 const int OT_OUT_PIN = D1; //for Arduino, 5 for ESP8266 (D1), 22 for ESP32
 const int OT_IN_PIN = D2;  //for Arduino, 4 for ESP8266 (D2), 21 for ESP32
 
+#define OPLO      20
+#define OPHIDEF   65
+#define OPHIMAX   85
+#define SPDEF     20
+#define SPMIN     5
+#define SPMAX     30
+
 // Temperature sensor pin
 const int ROOM_TEMP_SENSOR_PIN = D3; //for Arduino, 14 for ESP8266 (D5), 18 for ESP32
 
-const char* TOPIC = "opentherm-thermostat";
+const char* TOPIC = "opentherm-thermostat_";
 // MQTT topics
 const char* CURRENT_TEMP_GET_TOPIC = "/current-temperature/get";
 const char* CURRENT_TEMP_SET_TOPIC = "/current-temperature/set";
@@ -36,6 +43,7 @@ const char* MODE_HOT_WATER_SET_TOPIC = "/mode-hot-water/set";
 
 const char* TEMP_HOT_WATER_GET_TOPIC = "/hot-water-temperature/get";
 const char* TEMP_HOT_WATER_SET_TOPIC = "/hot-water-temperature/set";
+const char* TEMP_HOT_WATER_GET_CUR_TOPIC = "/hot-water-current-temperature/get";
 
 const char* TEMP_BOILER_GET_TOPIC = "/boiler-temperature/get";
 const char* TEMP_BOILER_TARGET_GET_TOPIC = "/boiler-target-temperature/get";
@@ -46,6 +54,10 @@ const char* BOILER_MODULATION_TOPIC = "/boiler-modulation/get";
 const char* INTERNAL_TEMP_CORRECT_GET_TOPIC = "/int-correct-temp/get";
 const char* INTERNAL_TEMP_CORRECT_SET_TOPIC = "/int-correct-temp/set";
 
+const char* MAX_BOILER_TEMP_GET_TOPIC = "/max-boiler-temp/get";
+const char* MAX_BOILER_TEMP_SET_TOPIC = "/max-boiler-temp/set";
+
+const char* INT_SENSOR_TEMP_GET_TOPIC = "/int-sensor-temperature/get";
 
 /*#define PATH_SETJSON          "/devset.json"
 
