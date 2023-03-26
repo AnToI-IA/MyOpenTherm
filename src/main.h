@@ -58,25 +58,3 @@ const char* MAX_BOILER_TEMP_GET_TOPIC = "/max-boiler-temp/get";
 const char* MAX_BOILER_TEMP_SET_TOPIC = "/max-boiler-temp/set";
 
 const char* INT_SENSOR_TEMP_GET_TOPIC = "/int-sensor-temperature/get";
-
-/*#define PATH_SETJSON          "/devset.json"
-
-struct Config {
-  char hostname[32];
-  char SSID[SSID_LEN];
-  char PSW[PSW_LEN];
-  uint32_t device_ip;
-  uint32_t gateway_ip;
-  uint32_t subnet_mask;
-  uint32_t dns_ip;
-  uint8_t dhcp;
-  uint16_t alarmDat;
-  uint16_t modulePeriodSleep;
-  uint8_t modulePeriodDat;
-  uint8_t modulePeriodTransmit;
-  uint16_t moduleAlarmDat;
-  uint8_t moduleLoraadr;
-  uint8_t moduleNamberDat;
-  uint8_t mainReload;
-  uint8_t telegramSend;
-}; */
