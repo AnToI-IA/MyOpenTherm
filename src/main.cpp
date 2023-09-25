@@ -24,6 +24,7 @@ const unsigned long intTempTimeout_ms = 10 * 1000;
 const unsigned long extTempTimeout_ms = 60 * 1000;
 const unsigned long statusUpdateInterval_ms = 5000;
 const unsigned long statusConnectMQTT_ms = 5000;
+const unsigned long statusConnectWiFi_ms = 5 * 60 * 1000;;
 float internalTempCorrect = 0;
 float inttemp = 0;
 
@@ -38,6 +39,7 @@ float t_hot_water;
 unsigned long ts = 0, new_ts = 0; //timestamp
 unsigned long lastUpdate = 0;
 unsigned long lastMQTTConnect = 0;
+unsigned long lastWiFiConnect = 0;
 unsigned long lastTempSet = 0;
 unsigned long lastIntTempSet = 0;
 
@@ -57,7 +59,7 @@ OpenTherm ot(OT_IN_PIN, OT_OUT_PIN);
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-void ICACHE_RAM_ATTR handleInterrupt() {
+void IRAM_ATTR handleInterrupt() {
   ot.handleInterrupt();
 }
 
@@ -316,6 +318,16 @@ void loop()
 {
   ArduinoOTA.handle();
   unsigned long now = millis();
+  
+  // В режиме точки доступа пробуем подключится к WiFi
+  if (mwifi.status == SoftAP) {
+    if (now - lastWiFiConnect > statusConnectWiFi_ms) {
+      if (strlen(myserv.getConfig().SSID) > 0) mwifi.AutoWiFi();
+      lastWiFiConnect = now;
+    }
+  }
+  
+  // Проверяем интернет в случае если есть обрыв связи с сервером, если интернет есть подключаемся повторно
   if (!client.connected()) {
     if (now - lastMQTTConnect > statusConnectMQTT_ms) {
       if (mwifi.status == Connected && mwifi.checkInternet()) reconnect();
@@ -324,12 +336,14 @@ void loop()
   }
   else client.loop();
 
+  // сохраняем конфиг при необходимости
   if (needSave) {
     myserv.saveConfig(PATH_SETJSON);
     Serial.println(" Save config!");
     needSave = false;
   }
 
+  // основная работа по отправке значений и корректировки температур
   if (now - lastUpdate > statusUpdateInterval_ms) {
     lastUpdate = now;
     myserv.handleClientServer();
