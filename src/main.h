@@ -27,7 +27,7 @@ const int OT_IN_PIN = D2;  //for Arduino, 4 for ESP8266 (D2), 21 for ESP32
 // Temperature sensor pin
 const int ROOM_TEMP_SENSOR_PIN = D3; //for Arduino, 14 for ESP8266 (D5), 18 for ESP32
 
-const char* TOPIC = "opentherm-thermostat_";
+const char* TOPIC = "opentherm-thermostat";
 // MQTT topics
 const char* CURRENT_TEMP_GET_TOPIC = "/current-temperature/get";
 const char* CURRENT_TEMP_SET_TOPIC = "/current-temperature/set";
