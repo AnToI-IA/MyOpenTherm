@@ -42,7 +42,7 @@ unsigned long lastMQTTConnect = 0;
 unsigned long lastWiFiConnect = 0;
 unsigned long lastTempSet = 0;
 unsigned long lastIntTempSet = 0;
-
+unsigned int countcheckinternet = 0;
 bool heatingEnabled = true;
 bool enableHotWater = false;
 unsigned char boiler_Fault = 0;
@@ -319,6 +319,12 @@ void loop()
   ArduinoOTA.handle();
   unsigned long now = millis();
   
+  if (countcheckinternet>5)
+  {
+    if (strlen(myserv.getConfig().SSID) > 0) mwifi.AutoWiFi();
+    countcheckinternet = 0;
+  }
+
   // В режиме точки доступа пробуем подключится к WiFi
   if (mwifi.status == SoftAP) {
     if (now - lastWiFiConnect > statusConnectWiFi_ms) {
@@ -332,9 +338,15 @@ void loop()
     if (now - lastMQTTConnect > statusConnectMQTT_ms) {
       if (mwifi.status == Connected && mwifi.checkInternet()) reconnect();
       lastMQTTConnect = now;
+      countcheckinternet++;
     }
   }
-  else client.loop();
+  else 
+  {
+    countcheckinternet = 0;
+    client.loop();
+  }
+  
 
   // сохраняем конфиг при необходимости
   if (needSave) {
