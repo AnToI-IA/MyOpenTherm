@@ -42,7 +42,7 @@ unsigned long lastMQTTConnect = 0;
 unsigned long lastWiFiConnect = 0;
 unsigned long lastTempSet = 0;
 unsigned long lastIntTempSet = 0;
-unsigned int countcheckinternet = 0;
+unsigned int countCheckInternetBad = 0;
 bool heatingEnabled = true;
 bool enableHotWater = false;
 unsigned char boiler_Fault = 0;
@@ -297,7 +297,7 @@ void setup()
 }
 
 
-void reconnect() {
+void ReconnectMqtt() {
   Serial.print("Attempting MQTT connection...");
   if (client.connect(TOPIC, mqtt_user, mqtt_password)) {
     Serial.println("ok");
@@ -316,13 +316,15 @@ void reconnect() {
 
 void loop()
 {
-  ArduinoOTA.handle();
   unsigned long now = millis();
-  
-  if (countcheckinternet>5)
+  if (mwifi.status == SoftAP || mwifi.status == Connected)
+    ArduinoOTA.handle();
+
+  // проверка интернета провалилась более ...  
+  if (countCheckInternetBad>5)
   {
-    if (strlen(myserv.getConfig().SSID) > 0) mwifi.AutoWiFi();
-    countcheckinternet = 0;
+    if (strlen(myserv.getConfig().SSID) > 0) mwifi.ReconnectWiFi();
+    countCheckInternetBad = 0;
   }
 
   // В режиме точки доступа пробуем подключится к WiFi
@@ -333,17 +335,23 @@ void loop()
     }
   }
   
-  // Проверяем интернет в случае если есть обрыв связи с сервером, если интернет есть подключаемся повторно
-  if (!client.connected()) {
-    if (now - lastMQTTConnect > statusConnectMQTT_ms) {
-      if (mwifi.status == Connected && mwifi.checkInternet()) reconnect();
+  // Проверяем интернет в случае если есть обрыв связи с сервером, 
+  // если есть подключение к wifi и есть интернет  подключаемся повторно
+  if (!client.connected()) 
+  {
+    if (now - lastMQTTConnect > statusConnectMQTT_ms) 
+    {
+      if (mwifi.status == Connected && mwifi.WifiIsConnect())
+      {
+        if (mwifi.InternetIsConnect()) ReconnectMqtt();
+      }
+      else countCheckInternetBad++;  
       lastMQTTConnect = now;
-      countcheckinternet++;
     }
   }
   else 
   {
-    countcheckinternet = 0;
+    countCheckInternetBad = 0;
     client.loop();
   }
   
