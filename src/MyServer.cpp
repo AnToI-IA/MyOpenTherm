@@ -1,4 +1,5 @@
 #include "MyServer.h"
+#include "Boiler.h"
 #include <string.h>
 #include <stdio.h> 
 
@@ -11,6 +12,7 @@ extern float internalTempCorrect;
 extern float t_hot_water;
 extern bool heatingEnabled;
 extern bool enableHotWater;
+extern Boiler boiler;
 
 Config MyServer::getConfig()
 {
@@ -34,8 +36,8 @@ bool loadConfiguration(const char *filename, Config &config) {
   // Copy values from the JsonDocument to the Config
   strlcpy(config.SSID, doc["SSID"] | "", sizeof(config.SSID));  
   strlcpy(config.PSW, doc["PSW"] | "", sizeof(config.PSW));  
-  sp = doc["SetPointTempr"];
-  ophi = doc[("MaxBoilerTempr")];
+  boiler.sp = doc["SetPointTempr"];
+  boiler.ophi = doc[("MaxBoilerTempr")];
   config.timeZone = doc["TimeZone"] | 0;
 
   heatingEnabled = doc[("HeatingEnabled")];
@@ -76,8 +78,8 @@ void saveConfiguration(const char *filename, const Config &config) {
   doc[("SSID")] = config.SSID;
   doc[("PSW")] = config.PSW;
   doc[("TimeZone")] = config.timeZone;
-  doc[("SetPointTempr")] = sp;
-  doc[("MaxBoilerTempr")] = ophi;
+  doc[("SetPointTempr")] = boiler.sp;
+  doc[("MaxBoilerTempr")] = boiler.ophi;
   doc[("HeatingEnabled")] = heatingEnabled;
   doc[("EnableHotWater")] = enableHotWater;
   doc[("InternalTempCorrect")] = internalTempCorrect;

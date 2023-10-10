@@ -16,9 +16,12 @@
 #include "LittleFS.h"
 #include "main.h"
 #include "MyServer.h"
+#include "Boiler.h"
 
+Boiler boiler;
 MyWiFI mwifi;
 MyServer myserv;
+
 
 const unsigned long intTempTimeout_ms = 10 * 1000;
 const unsigned long extTempTimeout_ms = 60 * 1000;
@@ -28,15 +31,9 @@ const unsigned long statusConnectWiFi_ms = 5 * 60 * 1000;;
 float internalTempCorrect = 0;
 float inttemp = 0;
 
-float  sp = 18, //set point
-       t = 18, //current temperature
-       t_last = 0, //prior temperature
-       ierr = 25, //integral error
-       dt = 0, //time between measurements
-       op = 75, //PID controller output
-       ophi = 75;
+
 float t_hot_water;
-unsigned long ts = 0, new_ts = 0; //timestamp
+
 unsigned long lastUpdate = 0;
 unsigned long lastMQTTConnect = 0;
 unsigned long lastWiFiConnect = 0;
@@ -76,34 +73,10 @@ float getTemp() {
   if (now - lastTempSet > extTempTimeout_ms)
     return inttemp + internalTempCorrect;
   else
-    return t;
+    return boiler.t;
 }
 
-float pid(float sp, float pv, float pv_last, float& ierr, float dt) {
-  float KP = 10;
-  float KI = 0.02;
-  // upper and lower bounds on heater level
-  float oplo = OPLO;
-  // calculate the error
-  float error = sp - pv;
-  // calculate the integral error
-  ierr = ierr + KI * error * dt;
-  // calculate the measurement derivative
-  //float dpv = (pv - pv_last) / dt;
-  // calculate the PID output
-  float P = KP * error; //proportional contribution
-  float I = ierr; //integral contribution
-  float op = P + I;
-  // implement anti-reset windup
-  if ((op < oplo) || (op > ophi)) {
-    I = I - KI * error * dt;
-    // clip output
-    op = max(oplo, min(ophi, op));
-  }
-  ierr = I;
-  Serial.println("sp=" + String(sp) + " pv=" + String(pv) + " dt=" + String(dt) + " op=" + String(op) + " P=" + String(P) + " I=" + String(I));
-  return op;
-}
+
 
 // This function calculates temperature and sends data to MQTT every second.
 void updateData()
@@ -120,15 +93,13 @@ void updateData()
     Serial.println("Error: Invalid boiler response " + String(response, HEX));
   }
 
-  t = getTemp();
-  new_ts = millis();
-  dt = (new_ts - ts) / 1000.0;
-  ts = new_ts;
+  boiler.t = getTemp();
+  
   if (responseStatus == OpenThermResponseStatus::SUCCESS) {
-    op = pid(sp, t, t_last, ierr, dt);
-    ot.setBoilerTemperature(op);
+    boiler.op = boiler.Pid();
+    ot.setBoilerTemperature(boiler.op);
   }
-  t_last = t;
+  
   unsigned long tnow = millis();
   if (ot.isHotWaterActive(response))
   {
@@ -140,7 +111,7 @@ void updateData()
     sensors.requestTemperatures(); //async temperature request
   }
 
-  Serial.print("Current temperature: " + String(t) + " °C ");
+  Serial.print("Current temperature: " + String(boiler.t) + " °C ");
   String tempSource = (millis() - lastTempSet > extTempTimeout_ms)
                       ? "(internal sensor)"
                       : "(external sensor)";
@@ -151,17 +122,17 @@ void updateData()
   float bt = ot.getBoilerTemperature();
   float wt = ot.getDHWTemperature();
   
-  client.publish(Topic(TEMP_BOILER_TARGET_GET_TOPIC).c_str(), String(op).c_str());
-  client.publish(Topic(CURRENT_TEMP_GET_TOPIC).c_str(), String(t).c_str());
+  client.publish(Topic(TEMP_BOILER_TARGET_GET_TOPIC).c_str(), String(boiler.op).c_str());
+  client.publish(Topic(CURRENT_TEMP_GET_TOPIC).c_str(), String(boiler.t).c_str());
   client.publish(Topic(TEMP_BOILER_GET_TOPIC).c_str(), String(bt).c_str());
-  client.publish(Topic(TEMP_SETPOINT_GET_TOPIC).c_str(), String(sp).c_str());
+  client.publish(Topic(TEMP_SETPOINT_GET_TOPIC).c_str(), String(boiler.sp).c_str());
   client.publish(Topic(MODE_GET_TOPIC).c_str(), heatingEnabled ? "heat" : "off");
   client.publish(Topic(MODE_HOT_WATER_GET_TOPIC).c_str(), enableHotWater ? "heat" : "off");
   client.publish(Topic(TEMP_HOT_WATER_GET_TOPIC).c_str(), String(wt).c_str());
   client.publish(Topic(TEMP_HOT_WATER_GET_CUR_TOPIC).c_str(), String(t_hot_water).c_str());
   client.publish(Topic(BOILER_MODULATION_TOPIC).c_str(), String(boiler_Modulation).c_str());
   client.publish(Topic(INTERNAL_TEMP_CORRECT_GET_TOPIC).c_str(), String(internalTempCorrect).c_str());
-  client.publish(Topic(MAX_BOILER_TEMP_GET_TOPIC).c_str(), String(ophi).c_str());
+  client.publish(Topic(MAX_BOILER_TEMP_GET_TOPIC).c_str(), String(boiler.ophi).c_str());
   client.publish(Topic(INT_SENSOR_TEMP_GET_TOPIC).c_str(), String(inttemp).c_str());
 }
 
@@ -188,13 +159,13 @@ void callback(char* topic, byte* payload, unsigned int length) {
   String payloadStr = convertPayloadToStr(payload, length);
 
   if (topicStr == setpointSetTopic) {
-    if ((sp > SPMAX) || (sp < SPMIN)) Serial.print("Target temperature not change! ");
-    else sp = payloadStr.toFloat();
+    if ((boiler.sp > SPMAX) || (boiler.sp < SPMIN)) Serial.print("Target temperature not change! ");
+    else boiler.sp = payloadStr.toFloat();
     Serial.println("Set target temperature: " + payloadStr);
     needSave = true;
   }
   else if (topicStr == currentTempSetTopic) {
-    t = payloadStr.toFloat();
+    boiler.t = payloadStr.toFloat();
     lastTempSet = millis();
   }
   else if (topicStr == setCorrectInternalTempTopic) {
@@ -208,11 +179,11 @@ void callback(char* topic, byte* payload, unsigned int length) {
     needSave = true;
   }
   else if (topicStr == maxBoilerTempTopic) {
-    ophi = payloadStr.toFloat();
-    if ((ophi > OPHIMAX) || (ophi < OPLO)) {
+    boiler.ophi = payloadStr.toFloat();
+    if ((boiler.ophi > OPHIMAX) || (boiler.ophi < OPLO)) {
       Serial.print("Maximum boiler not change! ");
     }
-    Serial.println("Temperature: " + String(ophi));
+    Serial.println("Temperature: " + String(boiler.ophi));
     needSave = true;
   }
   else if (topicStr == modeSetTopic) {
@@ -245,11 +216,7 @@ void listDir(const char * dirname) {
   }
 }
 
-void fixConfig () {
-  if ((ophi > OPHIMAX) || (ophi < OPLO)) ophi = OPHIDEF;
-  if ((sp > SPMAX) || (sp < SPMIN)) sp = SPDEF;
 
-}
 
 void setup()
 {
@@ -269,7 +236,8 @@ void setup()
     Serial.print("Load Config Failed. Save default");
     myserv.saveConfig(PATH_SETJSON);
   }
-  fixConfig ();
+  
+  boiler.CheckConfig();
   mwifi.SetConfig(myserv.getConfig().SSID,myserv.getConfig().PSW);
   mwifi.SetHostname("Boiler");
   mwifi.AutoWiFi();
@@ -290,9 +258,9 @@ void setup()
   sensors.begin();
   sensors.requestTemperatures();
   sensors.setWaitForConversion(false); //switch to async mode
-  t = sensors.getTempCByIndex(0);
-  t_last = t;
-  ts = millis();
+  boiler.t = sensors.getTempCByIndex(0);
+  boiler.t_last = boiler.t;
+  boiler.ts = millis();
   lastTempSet = -extTempTimeout_ms;
 }
 
