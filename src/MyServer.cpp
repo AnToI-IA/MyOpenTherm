@@ -43,7 +43,7 @@ bool loadConfiguration(const char *filename, Config &config) {
   heatingEnabled = doc[("HeatingEnabled")];
   enableHotWater = doc[("EnableHotWater")];
 
-  internalTempCorrect = doc[("InternalTempCorrect")];
+  boiler.internalTempCorrect = doc[("InternalTempCorrect")];
 
   t_hot_water = doc[("TempHotWater")];
   // Close the file (Curiously, File's destructor doesn't close the file)
@@ -82,7 +82,7 @@ void saveConfiguration(const char *filename, const Config &config) {
   doc[("MaxBoilerTempr")] = boiler.ophi;
   doc[("HeatingEnabled")] = heatingEnabled;
   doc[("EnableHotWater")] = enableHotWater;
-  doc[("InternalTempCorrect")] = internalTempCorrect;
+  doc[("InternalTempCorrect")] = boiler.internalTempCorrect;
   doc[("TempHotWater")] = t_hot_water;
   
   // Serialize JSON to file
@@ -126,7 +126,7 @@ void handleRoot()
   String strfile;
   strAddOnFile(PATH_HAED_HTML,&strfile);
   strAddOnFile(PATH_INDEX_HTML,&strfile);
-  strfile.replace(F("{IntTempr}"), String(inttemp));
+  strfile.replace(F("{IntTempr}"), String(boiler.internalTemp));
   strAddOnFile(PATH_INDEX_SCRIPT,&strfile);
   server.send(200, "text/html", strfile);
   strfile.clear();

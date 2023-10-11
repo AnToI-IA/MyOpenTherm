@@ -4,8 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <ESP8266WiFi.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
+
 #include <PubSubClient.h>
 #include <OpenTherm.h>
 
@@ -23,13 +22,12 @@ MyWiFI mwifi;
 MyServer myserv;
 
 
-const unsigned long intTempTimeout_ms = 10 * 1000;
-const unsigned long extTempTimeout_ms = 60 * 1000;
+
 const unsigned long statusUpdateInterval_ms = 5000;
 const unsigned long statusConnectMQTT_ms = 5000;
-const unsigned long statusConnectWiFi_ms = 5 * 60 * 1000;;
-float internalTempCorrect = 0;
-float inttemp = 0;
+const unsigned long statusConnectWiFi_ms = 5 * 60 * 1000;
+
+
 
 
 float t_hot_water;
@@ -37,8 +35,8 @@ float t_hot_water;
 unsigned long lastUpdate = 0;
 unsigned long lastMQTTConnect = 0;
 unsigned long lastWiFiConnect = 0;
-unsigned long lastTempSet = 0;
-unsigned long lastIntTempSet = 0;
+
+
 unsigned int countCheckInternetBad = 0;
 bool heatingEnabled = true;
 bool enableHotWater = false;
@@ -50,8 +48,7 @@ float boiler_Modulation = 0;
 
 bool needSave = false;
 
-OneWire oneWire(ROOM_TEMP_SENSOR_PIN);
-DallasTemperature sensors(&oneWire);
+
 OpenTherm ot(OT_IN_PIN, OT_OUT_PIN);
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -67,14 +64,7 @@ String Topic (const char* st )
   return st1 + st2;
 }
 
-float getTemp() {
-  inttemp = sensors.getTempCByIndex(0);
-  unsigned long now = millis();
-  if (now - lastTempSet > extTempTimeout_ms)
-    return inttemp + internalTempCorrect;
-  else
-    return boiler.t;
-}
+
 
 
 
@@ -93,8 +83,6 @@ void updateData()
     Serial.println("Error: Invalid boiler response " + String(response, HEX));
   }
 
-  boiler.t = getTemp();
-  
   if (responseStatus == OpenThermResponseStatus::SUCCESS) {
     boiler.op = boiler.Pid();
     ot.setBoilerTemperature(boiler.op);
@@ -106,13 +94,10 @@ void updateData()
     ot.setDHWSetpoint(t_hot_water);
     Serial.print("Set temperature hot water: " + String(t_hot_water) + " °C ");
   } 
-  if (tnow - lastIntTempSet > intTempTimeout_ms) {
-    lastIntTempSet = tnow;
-    sensors.requestTemperatures(); //async temperature request
-  }
+
 
   Serial.print("Current temperature: " + String(boiler.t) + " °C ");
-  String tempSource = (millis() - lastTempSet > extTempTimeout_ms)
+  String tempSource = boiler.workTempIsExternal
                       ? "(internal sensor)"
                       : "(external sensor)";
   Serial.println(tempSource);
@@ -131,9 +116,9 @@ void updateData()
   client.publish(Topic(TEMP_HOT_WATER_GET_TOPIC).c_str(), String(wt).c_str());
   client.publish(Topic(TEMP_HOT_WATER_GET_CUR_TOPIC).c_str(), String(t_hot_water).c_str());
   client.publish(Topic(BOILER_MODULATION_TOPIC).c_str(), String(boiler_Modulation).c_str());
-  client.publish(Topic(INTERNAL_TEMP_CORRECT_GET_TOPIC).c_str(), String(internalTempCorrect).c_str());
+  client.publish(Topic(INTERNAL_TEMP_CORRECT_GET_TOPIC).c_str(), String(boiler.internalTempCorrect).c_str());
   client.publish(Topic(MAX_BOILER_TEMP_GET_TOPIC).c_str(), String(boiler.ophi).c_str());
-  client.publish(Topic(INT_SENSOR_TEMP_GET_TOPIC).c_str(), String(inttemp).c_str());
+  client.publish(Topic(INT_SENSOR_TEMP_GET_TOPIC).c_str(), String(boiler.internalTemp).c_str());
 }
 
 String convertPayloadToStr(byte* payload, unsigned int length) {
@@ -165,12 +150,11 @@ void callback(char* topic, byte* payload, unsigned int length) {
     needSave = true;
   }
   else if (topicStr == currentTempSetTopic) {
-    boiler.t = payloadStr.toFloat();
-    lastTempSet = millis();
+    boiler.SetExtTemp(payloadStr.toFloat());
   }
   else if (topicStr == setCorrectInternalTempTopic) {
-    internalTempCorrect = payloadStr.toFloat();
-    Serial.println("Set correct: " + String(internalTempCorrect));
+    boiler.internalTempCorrect = payloadStr.toFloat();
+    Serial.println("Set correct: " + String(boiler.internalTempCorrect));
     needSave = true;
   }
   else if (topicStr == tempSetHotWaterTopic) {
@@ -238,6 +222,7 @@ void setup()
   }
   
   boiler.CheckConfig();
+
   mwifi.SetConfig(myserv.getConfig().SSID,myserv.getConfig().PSW);
   mwifi.SetHostname("Boiler");
   mwifi.AutoWiFi();
@@ -248,20 +233,12 @@ void setup()
   ArduinoOTA.setPassword((const char *)"3422");
   ArduinoOTA.begin();   // You should set a password for OTA. Ideally using MD5 hashes
   
+  boiler.Init();
 
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
 
   ot.begin(handleInterrupt);
-
-  //Init DS18B20 sensor
-  sensors.begin();
-  sensors.requestTemperatures();
-  sensors.setWaitForConversion(false); //switch to async mode
-  boiler.t = sensors.getTempCByIndex(0);
-  boiler.t_last = boiler.t;
-  boiler.ts = millis();
-  lastTempSet = -extTempTimeout_ms;
 }
 
 
@@ -284,6 +261,7 @@ void ReconnectMqtt() {
 
 void loop()
 {
+  boiler.loop();
   unsigned long now = millis();
   if (mwifi.status == SoftAP || mwifi.status == Connected)
     ArduinoOTA.handle();

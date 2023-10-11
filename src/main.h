@@ -1,12 +1,3 @@
-// Your WiFi credentials.
-// Set password to "" for open networks.
-//const char* ssid = "MiTS";
-//const char* pass = "Anton-3422";
-// Set password to "" for open networks.
-const char* ssid = "ZosiWiFi";
-const char* pass = "Zosi-3422";
-const char* ssid2 = "ZosiWiFi";
-const char* pass2 = "Zosi-3422";
 // Your MQTT broker address and credentials
 const char* mqtt_server = "194.146.38.199";
 const char* mqtt_user = "anto4a";
@@ -16,11 +7,6 @@ const int mqtt_port = 1883;
 // Master OpenTherm Shield pins configuration
 const int OT_OUT_PIN = D1; //for Arduino, 5 for ESP8266 (D1), 22 for ESP32
 const int OT_IN_PIN = D2;  //for Arduino, 4 for ESP8266 (D2), 21 for ESP32
-
-
-
-// Temperature sensor pin
-const int ROOM_TEMP_SENSOR_PIN = D3; //for Arduino, 14 for ESP8266 (D5), 18 for ESP32
 
 const char* TOPIC = "opentherm-thermostat";
 // MQTT topics
