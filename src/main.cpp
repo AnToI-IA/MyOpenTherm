@@ -96,10 +96,10 @@ void updateData()
   } 
 
 
-  Serial.print("Current temperature: " + String(boiler.t) + " °C ");
+  Serial.println("Current temperature: " + String(boiler.t) + " °C ");
   String tempSource = boiler.workTempIsExternal
-                      ? "(internal sensor)"
-                      : "(external sensor)";
+                      ? "(external sensor)"
+                      : "(internal sensor)";
   Serial.println(tempSource);
 
   if (!client.connected()) return;

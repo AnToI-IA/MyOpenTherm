@@ -28,6 +28,7 @@ void Boiler::Init()
 
 float Boiler::getInternalTemp() 
 {
+  sensors.requestTemperatures(); //async temperature request
   internalTemp = sensors.getTempCByIndex(0);
   return internalTemp + internalTempCorrect;
 }
@@ -39,7 +40,7 @@ void Boiler::loop()
   if (timeNow - this->lastIntTempSet > intTempTimeout_ms) 
   {
     this->lastIntTempSet = timeNow;
-    sensors.requestTemperatures(); //async temperature request
+    
   }
   // если давно не приходило обновления температуры с внешнего датчика
   if (timeNow - this->lastExtTempSet > extTempTimeout_ms)
