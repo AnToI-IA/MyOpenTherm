@@ -17,10 +17,10 @@ Boiler::Boiler()
 void Boiler::Init()
 {
   sensors.begin();
-  sensors.requestTemperatures();
-  sensors.setWaitForConversion(false); //switch to async mode
-
-  this->t = sensors.getTempCByIndex(0);
+  //sensors.requestTemperatures();
+  //sensors.setWaitForConversion(false); //switch to async mode
+  getInternalTemp();
+  //this->t = sensors.getTempCByIndex(0);
   this->t_last = this->t;
   this->ts = millis();
   this->lastExtTempSet = -extTempTimeout_ms;
@@ -30,6 +30,10 @@ float Boiler::getInternalTemp()
 {
   sensors.requestTemperatures(); //async temperature request
   internalTemp = sensors.getTempCByIndex(0);
+ 
+  String messagetemp = ("DS18B20 Temp=" + String(internalTemp) + "°C");
+  messagetemp += (" +/- " + String(this->internalTempCorrect) + " =" + String(internalTemp + this->internalTempCorrect) + "°C\r\n");
+  BoilerDebug.Message(messagetemp.c_str());
   return internalTemp + internalTempCorrect;
 }
 
@@ -39,8 +43,8 @@ void Boiler::loop()
   // переодический запрос температуры с встроенного датчика температуры
   if (timeNow - this->lastIntTempSet > intTempTimeout_ms) 
   {
+    getInternalTemp();
     this->lastIntTempSet = timeNow;
-    
   }
   // если давно не приходило обновления температуры с внешнего датчика
   if (timeNow - this->lastExtTempSet > extTempTimeout_ms)
@@ -80,7 +84,7 @@ float Boiler::Pid(float sp, float pv, float pv_last, float& ierr, float dt)
     op = max(oplo, min(this->ophi, op));  // выходное значение с учетом ограничений
   }
   ierr = I;                           // сохраним интегрирующую ошибку по указателю
-  String messagetemp = "sp=" + String(sp) + " pv=" + String(pv) + " dt=" + String(dt) + " op=" + String(op) + " P=" + String(P) + " I=" + String(I);
+  String messagetemp = "sp=" + String(sp) + " pv=" + String(pv) + " dt=" + String(dt) + " op=" + String(op) + " P=" + String(P) + " I=" + String(I) + "\r\n";
   BoilerDebug.Message(messagetemp.c_str());
   return op;
 }
